@@ -3,7 +3,8 @@ from typing import Dict, List
 from agno.agent import Agent    
 from agno.tools import Toolkit
 from agno.media import Image
-from agno.workflow import Step, Workflow, StepOutput
+import base64
+from agno.workflow import Step, Workflow, StepOutput,StepInput
 from agno.tools.python import PythonTools
 from pydantic import BaseModel,Field
 import pandas as pd
@@ -11,20 +12,18 @@ from natsort import natsorted
 from agno.models.google import Gemini
 import os
 
-
-
-# class LeitorInput(BaseModel):
-#     answers: dict = Field(...,
-#                                description="A dictionary that has the name of the image as its key and each of the questions as its value, and within each question the corresponding answer",
-#                         )
 class LeitorOutuput(BaseModel):
     answers: dict= Field(...,
                                description="A dictionary that has the name of the image as its key and each of the questions as its value, and within each question the corresponding answer",
                         )
-    
+class GeradorOutput(BaseModel):
+    dados: List[str] = Field(...,
+                                description= "A list of relevant information that should be extracted from the images"
+                                )
+        
 class MemoryTools(Toolkit):
     def __init__(self, **kwargs):
-        super().__init__(name="calculator_tools", tools=[self.save_memory,self.read_memory], **kwargs)
+        super().__init__(name="memory_tools", tools=[self.save_memory,self.read_memory], **kwargs)
     
     def save_memory(self,data: dict):
         """
@@ -39,9 +38,9 @@ class MemoryTools(Toolkit):
         """
         file_path = "data.csv"
     
-        new_data_dict = data["answers"]
+        new_answers_dict = data["answers"]
         
-        temp = pd.DataFrame.from_dict(new_data_dict, orient='index')
+        temp = pd.DataFrame.from_dict(new_answers_dict, orient='index')
         if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             memory = pd.read_csv(file_path, index_col=0)
         else:
@@ -62,16 +61,37 @@ class MemoryTools(Toolkit):
         memory = pd.read_csv(file_path)
         return memory.to_string()
 
+def insert_images(step_input: StepInput) -> StepOutput:
+    """
+    Custom function that creates a report using data from multiple previous steps.
+    This function has access to ALL previous step outputs and the original workflow message.
+    """
+    message = step_input.previous_step_content
+    images = step_input.additional_data.get("images")
+    return StepOutput(
+        step_name="insert_images", content=message, images=images,success=True
+    )
+
 vision_model = Gemini(id = "gemini-2.5-flash",provider= "gemini",api_key = os.getenv("GEMINI_API_KEY"))
 
-# answers = {
-#     'answers':{
-#     'Imagem1': {'Pergunta1': 'RespostaA', 'Pergunta2': 'RespostaB'},
-#     'Imagem2': {'Pergunta1': 'RespostaC', 'Pergunta2': 'RespostaD'},
-#     'Imagem3': {'Pergunta1': 'RespostaE', 'Pergunta2': 'RespostaF'}
-#     }
-# }
 
+gerador_perguntas = Agent(
+    model = vision_model,
+    name = "Question generator",
+    description= "You are an AI agent that specializes in deciding what to extract from an image based on a series of questions.",
+    instructions= """
+            Given a list of user questions, create a list of information to extract from all the images.
+            Analyse the question and think what information tou need to extract from the image to answer that question.
+            For each one of the question, you MUST give only one information.
+            For example:
+            INPUT: How many buildings are visible in the image.
+            OUTPUT: Number of buildings.
+            Don't repeat the user's question, you must decide what information is needed to answer the question
+            Return a list of information that must be extracted   
+    """,
+    output_schema= GeradorOutput,
+    debug_mode= True,
+)
 
 leitor = Agent(
     model = vision_model,
@@ -89,69 +109,70 @@ leitor = Agent(
         -The name of the image must be something like Image1, Image2...
     """,
     output_schema= LeitorOutuput,
-    tools= [MemoryTools()],
     use_json_mode= True,
     debug_mode= True,
 )
 
-# agent_teste1 = Agent(tools=[MemoryTools()],
-#               model = vision_model,
-#               instructions = "Use the MemoryTools to save the dictionary on a csv file",
-#               input_schema = LeitorInput,
-#               debug_mode = True,
-#             )
 saver = Agent(tools=[MemoryTools()],
               model = vision_model,
-              instructions = "Use the read_memory tool to read csv file and get a pandas dataframe on string format",
+              instructions = "Use the MemoryTools to save the dictionary on a csv file",
+              input_schema = LeitorOutuput,
+              debug_mode = True,
+            )
+printer = Agent(tools=[MemoryTools()],
+              model = vision_model,
+              instructions = "Use the read_memory tool to read csv file and get a pandas dataframe on string format and show the dataframe",
                debug_mode = True,
             )
-# agent3 = Agent(tools = [PythonTools()],
-#                model = vision_model,
-#                instructions = "Write a python code that extract the answer of the Pergunta 2 from imagem1",
-#                 debug_mode = True,
-#                )
+
+caminho_da_pasta = 'imagens'
+lista_de_imagens = []
+caminho_absoluto_pasta = os.path.abspath(caminho_da_pasta)
+
+nomes_dos_arquivos = natsorted([
+    f for f in os.listdir(caminho_absoluto_pasta) 
+    if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+])
+
+for nome_do_arquivo in nomes_dos_arquivos:
+    caminho_completo = os.path.join(caminho_absoluto_pasta, nome_do_arquivo)
+    
+    try:
+        with open(caminho_completo, "rb") as image_file:
+            base64_string = base64.b64encode(image_file.read()).decode('utf-8')
+
+        imagem = Image(
+            content=base64_string 
+        )
+        
+        lista_de_imagens.append(imagem)
+        print(f"Imagem codificada com sucesso: {nome_do_arquivo}")
+
+    except Exception as e:
+        print(f"Erro ao processar {nome_do_arquivo}: {e}")
+
 
 workflow = Workflow(
     name="Pandas pipeline",
     steps=[
+        gerador_perguntas,
+        Step(
+            executor = insert_images
+        ),
         leitor,   
         saver,
+        printer,
     ],
     debug_mode = True,
 )
 
 
-caminho_da_pasta = 'imagens'
+input = ["Quantidade de pessoas",
+         "Quantidade de carros"]
 
-
-lista_de_imagens = []
-
-# 1. Define o caminho absoluto da pasta para evitar ambiguidades
-# Se 'caminho_da_pasta' for relativo (ex: 'imagens'), isso o torna completo
-caminho_absoluto_pasta = os.path.abspath(caminho_da_pasta)
-
-# Verifica se a pasta existe antes de listar
-if os.path.exists(caminho_absoluto_pasta):
-    
-    nomes_dos_arquivos = natsorted([
-        f for f in os.listdir(caminho_absoluto_pasta) 
-        if f.lower().endswith(('.png', '.jpg', '.jpeg')) # Adicionei .lower() para pegar .JPG ou .PNG
-    ])
-
-    for nome_do_arquivo in nomes_dos_arquivos:
-        caminho_completo = os.path.join(caminho_absoluto_pasta, nome_do_arquivo)
-        
-        # Debug: Mostra o que está sendo processado
-        print(f"Adicionando imagem: {caminho_completo}")
-
-        # Cria o objeto Image com o caminho absoluto
-        imagem = Image(filepath=caminho_completo)
-        
-        if imagem:
-            lista_de_imagens.append(imagem)
-else:
-    print(f"Erro: A pasta {caminho_absoluto_pasta} não foi encontrada.")
-
-
-input = ["Quantidade de pessoas"]
-workflow.print_response(input = input,images=lista_de_imagens)
+workflow.print_response(
+    input = input, 
+    additional_data = {
+        "images": lista_de_imagens
+    },
+)
