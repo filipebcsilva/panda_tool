@@ -4,6 +4,7 @@ from agno.agent import Agent
 from agno.tools import Toolkit
 from agno.media import Image
 import base64
+import json
 from agno.workflow import Step, Workflow, StepOutput,StepInput
 from agno.tools.python import PythonTools
 from pydantic import BaseModel,Field
@@ -13,7 +14,7 @@ from agno.models.google import Gemini
 import os
 
 class LeitorOutuput(BaseModel):
-    answers: dict= Field(...,
+    answers: dict = Field(...,
                                description="A dictionary that has the name of the image as its key and each of the questions as its value, and within each question the corresponding answer",
                         )
 class GeradorOutput(BaseModel):
@@ -37,10 +38,14 @@ class MemoryTools(Toolkit):
         
         """
         file_path = "data.csv"
-    
-        new_answers_dict = data["answers"]
         
-        temp = pd.DataFrame.from_dict(new_answers_dict, orient='index')
+        answers = data.get("answers")
+
+        if answers is not None:
+            temp = pd.DataFrame.from_dict(answers, orient='index')
+        else:
+            temp = pd.DataFrame.from_dict(data, orient='index')
+        
         if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
             memory = pd.read_csv(file_path, index_col=0)
         else:
@@ -61,17 +66,28 @@ class MemoryTools(Toolkit):
         memory = pd.read_csv(file_path)
         return memory.to_string()
 
-def insert_images(step_input: StepInput) -> StepOutput:
+def insert_name_image(step_input: StepInput) -> StepOutput:
     """
     Custom function that creates a report using data from multiple previous steps.
     This function has access to ALL previous step outputs and the original workflow message.
     """
     message = step_input.previous_step_content
-    images = step_input.additional_data.get("images")
+
+    name_image = step_input.additional_data.get("image_name")
+    
+    answers = {
+        "answers": {
+            name_image: message.answers
+        }
+    }
+    
+    answers_str = json.dumps(answers,ensure_ascii=False)
     return StepOutput(
-        step_name="insert_images", content=message, images=images,success=True
+        step_name="insert_name_images", content=answers_str, success=True
     )
 
+
+    
 vision_model = Gemini(id = "gemini-2.5-flash",provider= "gemini",api_key = os.getenv("GEMINI_API_KEY"))
 
 
@@ -98,25 +114,39 @@ leitor = Agent(
     name = "Image reader",
     description= "You are an AI agent specialized in analyzing and extracting information from images",
     instructions= """
-        Given a list of images and the input of data that must be extracted, perform the following action for all images:
-        Answer the sequence of questions individually for each image directly, for example:
+        Given a image and the input of data that must be extracted, perform the following action for the image:
+        Answer the sequence of questions for the image directly, for example:
         Example:
         -Question: How many buildings are in the image?
         -Answer: 8
         Don't give ambiguous answers. If in doubt, choose only one direct answer.
         Instructions for output_schema:
         -Don't repeat the user's question more than once!
-        -The name of the image must be something like Image1, Image2...
+        -The name of each question must be the sabe given on the {input}
     """,
     output_schema= LeitorOutuput,
     use_json_mode= True,
     debug_mode= True,
 )
 
+def image_base64(absolut_path,name_file) -> Image:
+    
+    caminho_completo = os.path.join(absolut_path, name_file)
+    try:
+        with open(caminho_completo, "rb") as image_file:
+            base64_string = base64.b64encode(image_file.read()).decode('utf-8')
+
+            imagem = Image(
+                content=base64_string 
+            )
+            return imagem
+    except Exception as e:
+        print(f"Erro ao processar {name_file}: {e}")
+    
+    
 saver = Agent(tools=[MemoryTools()],
               model = vision_model,
               instructions = "Use the MemoryTools to save the dictionary on a csv file",
-              input_schema = LeitorOutuput,
               debug_mode = True,
             )
 printer = Agent(tools=[MemoryTools()],
@@ -127,6 +157,7 @@ printer = Agent(tools=[MemoryTools()],
 
 caminho_da_pasta = 'imagens'
 lista_de_imagens = []
+
 caminho_absoluto_pasta = os.path.abspath(caminho_da_pasta)
 
 nomes_dos_arquivos = natsorted([
@@ -134,45 +165,31 @@ nomes_dos_arquivos = natsorted([
     if f.lower().endswith(('.png', '.jpg', '.jpeg'))
 ])
 
-for nome_do_arquivo in nomes_dos_arquivos:
-    caminho_completo = os.path.join(caminho_absoluto_pasta, nome_do_arquivo)
-    
-    try:
-        with open(caminho_completo, "rb") as image_file:
-            base64_string = base64.b64encode(image_file.read()).decode('utf-8')
-
-        imagem = Image(
-            content=base64_string 
-        )
-        
-        lista_de_imagens.append(imagem)
-        print(f"Imagem codificada com sucesso: {nome_do_arquivo}")
-
-    except Exception as e:
-        print(f"Erro ao processar {nome_do_arquivo}: {e}")
-
-
 workflow = Workflow(
     name="Pandas pipeline",
     steps=[
-        gerador_perguntas,
-        Step(
-            executor = insert_images
-        ),
-        leitor,   
+        leitor,
+        Step(executor = insert_name_image),
         saver,
-        printer,
     ],
     debug_mode = True,
 )
 
 
-input = ["Quantidade de pessoas",
-         "Quantidade de carros"]
+input = ["Qual é a média de pessoas por imagem",
+         "Qual é a média de carros por imagem"]
 
-workflow.print_response(
-    input = input, 
-    additional_data = {
-        "images": lista_de_imagens
-    },
-)
+reposta_gerador = gerador_perguntas.run(input=input)
+
+input = reposta_gerador.content.dados
+
+for nome in nomes_dos_arquivos:
+    image = image_base64(caminho_absoluto_pasta,nome)
+    
+    workflow.print_response(
+        input = input, 
+        images = [image],
+        additional_data={
+            "image_name": nome
+        }
+    )
