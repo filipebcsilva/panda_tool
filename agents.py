@@ -1,6 +1,7 @@
 from typing import List
 from agno.agent import Agent    
 from pydantic import BaseModel,Field
+from agno.models.ollama import Ollama
 from agno.models.google import Gemini
 from MemoryTool import MemoryTools
 import os
@@ -13,7 +14,9 @@ class GeradorOutput(BaseModel):
     dados: List[str] = Field(...,
                                 description= "A list of relevant information that should be extracted from the images"
                                 )
-    
+
+
+text_model = Ollama(id = "qwen2.5-coder:7b",format = "json")
        
 vision_model = Gemini(id = "gemini-2.5-flash",provider= "gemini",api_key = os.getenv("GEMINI_API_KEY"))
 
@@ -37,7 +40,7 @@ gerador_perguntas = Agent(
 )
 
 leitor = Agent(
-    model = vision_model,
+    model = text_model,
     name = "Image reader",
     description= "You are an AI agent specialized in analyzing and extracting information from images",
     instructions= """
@@ -58,6 +61,9 @@ leitor = Agent(
 
 saver = Agent(tools=[MemoryTools()],
               model = vision_model,
-              instructions = "Use the MemoryTools to save the dictionary on a csv file",
+              description = "You are a Agent that uses a tool to save a dictionary on a csv file",
+              instructions = ["You have acces to a save_memory tool",
+                              "Always call the tool to save the data",
+                              "Do not describe things, just call the tool"],
               debug_mode = True,
             )

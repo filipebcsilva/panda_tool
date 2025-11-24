@@ -1,9 +1,10 @@
 from agno.media import Image
 from agno.agent import Agent
 import base64
+from MemoryTool import MemoryTools
 from pydantic import BaseModel,Field
 from agno.models.google import Gemini
-from agno.workflow import Workflow
+from agno.workflow import Workflow,Step
 from natsort import natsorted
 from agents import saver
 from workflow import vilma_workflow
@@ -54,12 +55,15 @@ leitor = Agent(
         Instructions for output_schema:
         -Don't repeat the user's question more than once!
         -The name of each question must be the sabe given on the {input}
-        - The dictionary must contais the name of the word
+        -The dictionary must contais the name of the word
+        -The dictionary must follow the json format with ""
     """,
     output_schema= LeitorOutuput,
     use_json_mode= True,
     debug_mode= True,
 )
+
+
 workflow = Workflow(
     name="Pandas pipeline",
     steps=[
@@ -71,6 +75,6 @@ workflow = Workflow(
 
 
 for palavra in lista_palavras:
-    workflow.print_response(
+    workflow.run(
         input = palavra, 
 )
