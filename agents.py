@@ -16,7 +16,13 @@ class GeradorOutput(BaseModel):
                                 )
 
 
-text_model = Ollama(id = "qwen2.5-coder:7b",format = "json")
+text_model = Ollama(
+    id="llama3.1:8b",
+    options={
+            "num_predict": 4096,
+            "num_ctx": 8192    
+        }
+    )
        
 vision_model = Gemini(id = "gemini-2.5-flash",provider= "gemini",api_key = os.getenv("GEMINI_API_KEY"))
 
@@ -60,7 +66,7 @@ leitor = Agent(
 )
 
 saver = Agent(tools=[MemoryTools()],
-              model = vision_model,
+              model = text_model,
               description = "You are a Agent that uses a tool to save a dictionary on a csv file",
               instructions = ["You have acces to a save_memory tool",
                               "Always call the tool to save the data",
