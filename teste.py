@@ -2,16 +2,12 @@ from agno.media import Image
 from agno.agent import Agent
 import base64
 import json
-from MemoryTool import MemoryTools
+from typing import Dict, Any
 from pydantic import BaseModel,Field
-from agno.models.google import Gemini
+from MemoryTool import MemoryTools
 from agno.models.ollama import Ollama
-from agno.tools.python import PythonTools
 from agno.workflow import Workflow,Step,StepInput,StepOutput
-from natsort import natsorted
-from agents import saver
 import re
-from workflow import vilma_workflow
 import os
 
 
@@ -28,9 +24,7 @@ text_model = Ollama(
             "num_ctx": 8192    
         }
     )
-code_model = Ollama(
-    id = "qwen2.5-coder:14b",
-    )
+
 def insert_name_word(step_input: StepInput) -> StepOutput:
     """
     Insere o nome da palavra no resultado da análise.
@@ -100,57 +94,43 @@ with open(arquivo_nome, 'r', encoding='utf-8') as arquivo:
         lista_palavras = [linha.strip() for linha in arquivo]
 
 
+questions = ["Is it a fruit",
+             "Is it a animal"]
+
+saver = Agent(
+    tools=[MemoryTools()],
+    model = text_model,
+    description = "You are a Agent that uses a tool to save a dictionary on a csv file",
+    instructions = [
+                "You have acces to a save_memory tool",
+                "Always call the tool to save the data",
+                "Do not describe things, just call the tool with the input dictionary, dont change its format"
+                ],
+    debug_mode = True,
+            )
+
 leitor = Agent(
     model = text_model,
     name = "Word reader",
     description= "You are an AI agent specialized in analyzing words",
-    instructions= """
-        Given a word and a list of questions about the word, perform the following action for the word:
-        Answer the questions about the word:
-        1 - Is it a fruit?
-        2 - Is it a animal?
-        Always answer the question on this order
-        Answer the questions with yes or no
-        Don't give ambiguous answers. If in doubt, choose only one direct answer.
-        Instructions for output_schema:
-        -Don't repeat the user's question more than once!
-        -The dictionary must follow a json format
-        -Respond in English
-    """,
+    instructions=[
+        "TASK: Answer the questions below regarding the input word/image.",
+        f"QUESTIONS:\n{questions}",
+        
+        "OUTPUT FORMAT (CRITICAL):",
+        "1. The output must be a dictionary and the keys must be the exact questions listed above.",
+        
+        "DATA STANDARDS (Apply based on context):",
+        "   - QUANTITIES: If the answer is a number, return a PURE INTEGER or FLOAT (e.g., 5, 3.5). Never add units like '5 kg' or '3 people'.",
+        "   - BOOLEANS: If the answer is Yes/No, use lowercase 'yes' or 'no'.",
+        "   - TEXT: Keep it concise and lowercase (e.g., 'blue', 'metal').",
+        
+    ],
     output_schema= LeitorOutuput,
     use_json_mode= True,
     debug_mode= True,
 )
 
-analista = Agent(
-    model=code_model,
-    name="Data Analyst",
-    description="You are a Python Data Analyst tailored for pandas operations.",
-    
-    instructions=[
-        "STRATEGY: You perform analysis by WRITING and EXECUTING python code.",
-        
-        "DATA SOURCE:",
-        "   - Target file: 'data.csv' (in the current directory).",
-        "   - Structure: The first column (index 0) contains the Item Names (e.g., 'Abóbora').",
-        "   - Format: Use `df = pd.read_csv('data.csv', index_col=0)`.",
-        
-        "IMPORTANT RULES:",
-        "   1. DO NOT try to read the file content into the chat conversation.",
-        "   2. USE PANDAS methods (value_counts, query, shape) to find answers.",
-        "   3. PRINT the result inside the python script.",
-        
-        "Example:",
-        "   User: 'How many fruits?'",
-        "   You write:",
-        "   import pandas as pd",
-        "   df = pd.read_csv('data.csv', index_col=0)",
-        "   print(df[df['answers'].str.contains('fruit', case=False)].shape[0])"
-    ],
-    
-    tools=[PythonTools()], 
-    debug_mode=True,
-)
 
 insert_name_step = Step(name = "insert name word",executor=insert_name_word)
 
