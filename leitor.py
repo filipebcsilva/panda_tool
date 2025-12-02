@@ -25,9 +25,14 @@ analista = Agent(
       f"CONTEXT: {info_contexto}",
         
         "GOAL: Answer user questions by writing and running Python scripts using the PythonTools avaiable.",
+
+        "RULES: "
+        "1. Try to install the pandas package before writing the code",
+        "2. You MUST write the script, don't forget to do that",
+        "3. After installing the pandas package, folow the steps:"
         
         "STRATEGY FOR MIXED DATA TYPES (Critical):",
-                
+        
         "1. LOADING:",
         "   - `df = pd.read_csv('teste.csv', index_col=0)`",
         
@@ -49,7 +54,7 @@ analista = Agent(
         "   - Code: `df[(df['people'] > 2) & (df['color'] == 'blue')]`.",
         
         "4. OUTPUT:",
-        "   - Always use `print()` to display the result."
+        "   - Always use `print()` to display the result.",
 
     ],
     
@@ -66,5 +71,5 @@ input = [
     "Qual a média de carros apenas nas imagens que têm 'urbano' ou 'transito' no nome?"
 ]
 
-analista.run(input=input
+analista.print_response(input=input
                         )
