@@ -79,7 +79,7 @@ get_next_image_step = Step(
 )
 
 get_user_questions_step = Step(
-    name = "Get the user's questions",
+    name = "Insere as perguntas do usuario",
     executor = insert_input_questions
 )
 
